@@ -1,8 +1,5 @@
 # Speed_Bump_Plugin
 用于放置减速带拓展
-# 减速带 (Speed Bump)
-1. 多线程 + 单线程下载工具，支持HTTP，HTTPS，BT（Torrent、Magnet），ED2K
-2. 视频处理器，支持合并音频，视频；
 
 ### 官方提供的拓展支持格式
 - 哔哩哔哩（视频、视频合集）
