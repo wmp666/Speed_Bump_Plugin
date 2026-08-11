@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/BiliParser/BiliParser.iml" filepath="$PROJECT_DIR$/BiliParser/BiliParser.iml" />
+      <module fileurl="file://$PROJECT_DIR$/DouyinParser/DouyinParser.iml" filepath="$PROJECT_DIR$/DouyinParser/DouyinParser.iml" />
+    </modules>
+  </component>
+</project>

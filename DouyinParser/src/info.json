@@ -1,0 +1,8 @@
+{
+  "id": "抖音分享链接解析器",
+  "version": "1.0.1",
+  "author": "无名牌",
+  "mainClass": "com.wmp.parser.douyin.DouyinParser",
+  "plugin_support_version_start": "+",
+  "plugin_support_version_last": "1.1.0"
+}
