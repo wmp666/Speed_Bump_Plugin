@@ -4,6 +4,7 @@
 ### 官方提供的拓展支持格式
 - 哔哩哔哩（视频、视频合集）
 - 抖音（视频、图集）
+- ED2K
 
 ## 许可证
 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0.html)
