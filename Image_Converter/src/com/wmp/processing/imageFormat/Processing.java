@@ -87,7 +87,7 @@ public class Processing extends AbstractParser {
     public boolean isMeetRequirements(String link) {
         try {
             var file = new File(link);
-            return stringIsEndsContains(file.getName(), "png", "jpg", "jpeg", "bmp", "gif", "ico", "webp");
+            return stringIsEndsContains(file.getName(), ImageIO.getReaderFileSuffixes());
         } catch (Exception e) {
             logger.error("这个链接不是文件", e);
         }

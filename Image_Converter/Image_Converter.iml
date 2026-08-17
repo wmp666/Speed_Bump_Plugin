@@ -19,5 +19,6 @@
     <orderEntry type="library" name="Maven: com.twelvemonkeys.imageio:imageio-core:3.13.1" level="project" />
     <orderEntry type="library" name="Maven: com.twelvemonkeys.imageio:imageio-webp:3.13.1" level="project" />
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="library" name="imageio-plugins-3.13.1" level="project" />
   </component>
 </module>

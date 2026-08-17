@@ -26,8 +26,8 @@ public class ImageLinkFileEditPanel {
         logger.info("支持的读取后缀: " + readerSet);
         logger.info("支持的写入后缀: " + writerSet);
 
-        readerSet.retainAll(writerSet);
-        var strings = new ArrayList<String>(readerSet);
+        //readerSet.retainAll(writerSet);
+        var strings = new ArrayList<>(writerSet);
         logger.info(strings);
         strings.forEach(suffixes -> comboBox.addItem(suffixes));
 
