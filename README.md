@@ -12,7 +12,8 @@
 ## 鸣谢
 
 ### 第三方库
-> 会放到主仓库里
+> 部分会放到主仓库里
+- [TwelveMonkeys:haraldk](https://github.com/haraldk/TwelveMonkeys)
 
 ### 贡献者
 1. 作者：开发者

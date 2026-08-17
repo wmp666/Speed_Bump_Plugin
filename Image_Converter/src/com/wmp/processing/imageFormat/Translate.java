@@ -1,12 +1,9 @@
 package com.wmp.processing.imageFormat;
 
-import com.wmp.downloader.tools.platform.GetPlatform;
-
-import java.io.File;
 import java.util.Locale;
 import java.util.ResourceBundle;
 
-public class StringFormat {
+public class Translate {
     private static final String BUNDLE_PREFIX = "";
 
     public static String translate(String key) {

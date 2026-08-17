@@ -61,13 +61,13 @@
             </constraints>
             <properties>
               <model>
-                <item value=".jpg"/>
-                <item value=".png"/>
-                <item value=".bmp"/>
-                <item value=".ico"/>
-                <item value=".webp"/>
-                <item value=".jpeg"/>
-                <item value=".gif"/>
+                <item value="jpg"/>
+                <item value="png"/>
+                <item value="bmp"/>
+                <item value="ico"/>
+                <item value="webp"/>
+                <item value="jpeg"/>
+                <item value="gif"/>
               </model>
             </properties>
           </component>

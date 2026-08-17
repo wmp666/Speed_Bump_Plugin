@@ -12,6 +12,8 @@ import java.util.List;
 
 public class ImageConverter {
 
+
+
     /**
      * 图片格式转换通用方法（支持 JPEG, PNG, GIF, BMP, WebP, ICO）
      *
@@ -32,7 +34,6 @@ public class ImageConverter {
 
         String format = targetFormat.toLowerCase().trim();
         File output = new File(targetPath);
-
         // 2. 处理 ICO 格式（多尺寸）
         if ("ico".equals(format)) {
             if (icoSizes == null || icoSizes.isEmpty()) {
@@ -40,10 +41,16 @@ public class ImageConverter {
             }
             List<BufferedImage> images = new ArrayList<>();
             for (int size : icoSizes) {
-                images.add(resizeImage(source, size, size));
+                BufferedImage scaled = resizeImage(source, size, size);
+                // 转换类型以符合 ICO 写入器要求
+                BufferedImage converted = new BufferedImage(
+                        scaled.getWidth(), scaled.getHeight(), BufferedImage.TYPE_4BYTE_ABGR);
+                Graphics2D g = converted.createGraphics();
+                g.drawImage(scaled, 0, 0, null);
+                g.dispose();
+                images.add(converted);
             }
 
-            // 获取专门处理 ICO 格式的写入器
             ImageWriter writer = ImageIO.getImageWritersByFormatName("ico").next();
             if (writer == null) {
                 throw new IOException("未找到 ICO 格式的 ImageWriter，请检查是否引入了 imageio-ico 依赖");
@@ -51,19 +58,15 @@ public class ImageConverter {
 
             try (ImageOutputStream ios = ImageIO.createImageOutputStream(output)) {
                 writer.setOutput(ios);
-                // 开始写入序列（ICO 格式要求多张图片按顺序写入）
                 writer.prepareWriteSequence(null);
                 for (BufferedImage img : images) {
-                    // 将每张图片封装为 IIOImage 并写入序列
                     writer.writeToSequence(new IIOImage(img, null, null), null);
                 }
-                // 结束序列
                 writer.endWriteSequence();
             } finally {
-                // 释放资源
                 writer.dispose();
             }
-            return; // 处理完毕，直接返回
+            return;
         }
 
         // 3. 处理 JPG/JPEG（需特殊处理透明背景，否则透明部分会变黑）
@@ -87,7 +90,7 @@ public class ImageConverter {
             );
         }
 
-        // 5. 其他格式 (PNG, GIF, BMP, WebP)
+        // 5. 其他格式 (PNG, GIF, BMP, WebP, ICO)
         // 注意：TwelveMonkeys 已注入 WebP 读写能力，直接用 ImageIO 即可
         ImageIO.write(source, format, output);
     }

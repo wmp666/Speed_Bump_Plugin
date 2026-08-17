@@ -2,11 +2,9 @@ package com.wmp.processing.imageFormat;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.wmp.downloader.newArchitecture.abstractTask.AbstractTask;
-import com.wmp.downloader.tools.StringFormat;
 import com.wmp.downloader.tools.ui.ToastMessage;
 import org.apache.log4j.Logger;
 
-import java.awt.datatransfer.FlavorEvent;
 import java.io.File;
 
 public class ImageConverterTask extends AbstractTask {
@@ -22,7 +20,8 @@ public class ImageConverterTask extends AbstractTask {
         this.exitButton.setEnabled(false);
         Thread.ofVirtual().start(()->{
             try {
-                ImageConverter.convertImage(this.jsonObject.getString("url"), new File(this.savePath, this.fileName + "." + this.jsonObject.getString("image_format")).getAbsolutePath(), this.jsonObject.getString("image_format"), null);
+                ImageConverter.convertImage(this.jsonObject.getString("url"), new File(this.savePath, this.fileName).getAbsolutePath(), this.jsonObject.getString("image_type"), null);
+                this.exitButton.setEnabled(true);
                 isFinally = true;
             } catch (Exception e) {
                 isStart = false;
@@ -31,7 +30,7 @@ public class ImageConverterTask extends AbstractTask {
                 this.downloadControlButton.setEnabled(true);
                 this.exitButton.setEnabled(true);
                 logger.error("类型转换失败", e);
-                ToastMessage.show(com.wmp.processing.imageFormat.StringFormat.translate("failed"));
+                ToastMessage.show(Translate.translate("failed"), ToastMessage.ERROR);
             }
 
         });
