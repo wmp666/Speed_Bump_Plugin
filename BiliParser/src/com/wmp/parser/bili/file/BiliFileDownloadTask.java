@@ -3,6 +3,7 @@ package com.wmp.parser.bili.file;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.FileDownloadTask;
+import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.StatusTipPanel;
 import com.wmp.downloader.tools.StringFormat;
 import com.wmp.downloader.tools.download.ConvergenceTool;
 import com.wmp.downloader.tools.download.URLDownloadTool;
@@ -31,6 +32,12 @@ public class BiliFileDownloadTask extends FileDownloadTask {
     private final URLDownloadTool.DownloadProgress downloadProgress = new URLDownloadTool.DownloadProgress();
     private Timer progressTimer;
 
+    private final StatusTipPanel DOWNLOAD_SIZE_PANEL = StatusTipPanel.DOWNLOAD_SIZE_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_SPEED_PANEL = StatusTipPanel.DOWNLOAD_SPEED_CREATOR.create();
+    private final StatusTipPanel FILE_MERGE_PANEL = StatusTipPanel.FILE_MERGE_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_FAILED_PANEL = StatusTipPanel.DOWNLOAD_FAILED_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_SUCCESS_PANEL = StatusTipPanel.DOWNLOAD_SUCCESS_CREATOR.create();
+
     public BiliFileDownloadTask(JSONObject jsonObject) {
         super(jsonObject);
         this.fileSize = jsonObject.getJSONArray("biliSize").stream().mapToLong(o -> Long.parseLong(o.toString())).toArray();
@@ -45,6 +52,8 @@ public class BiliFileDownloadTask extends FileDownloadTask {
         } else {
             DataControl.deleteFolder(tempDir, false);
         }
+
+        this.addStatusTips(DOWNLOAD_SIZE_PANEL, DOWNLOAD_SPEED_PANEL, FILE_MERGE_PANEL);
     }
 
     private Map<String, String> buildHeaders() {
@@ -56,6 +65,9 @@ public class BiliFileDownloadTask extends FileDownloadTask {
     }
 
     public void doWhenStart() throws Exception {
+
+        removeAllStatusTip();
+        addStatusTips(DOWNLOAD_SIZE_PANEL, DOWNLOAD_SPEED_PANEL, FILE_MERGE_PANEL);
 
         ProgressBarsPanel.removeAll();
         threadProgressBarList.clear();
@@ -75,7 +87,6 @@ public class BiliFileDownloadTask extends FileDownloadTask {
                 boolean videoSuccess = false;
                 boolean audioSuccess = false;
 
-                SwingUtilities.invokeLater(() -> infoLabel.setText(StringFormat.translate("task", "task.download_task.downloading_video")));
                 try {
                     videoSuccess = downloadFile(videoUri, tempDir, "video.m4s", headers, fileSize[0]);
                     //if (!videoSuccess) return;
@@ -84,7 +95,6 @@ public class BiliFileDownloadTask extends FileDownloadTask {
                     ToastMessage.show(this, StringFormat.translate("task", "task.download_task.video_download_failed"), ToastMessage.ERROR);
                 }
 
-                SwingUtilities.invokeLater(() -> infoLabel.setText(StringFormat.translate("task", "task.download_task.downloading_audio")));
                 downloadProgress.resetSpeed();
                 downloadProgress.resetMergedBytes();
                 ProgressBarsPanel.removeAll();
@@ -109,21 +119,25 @@ public class BiliFileDownloadTask extends FileDownloadTask {
                     var jProgressBar = new JProgressBar();
                     jProgressBar.setStringPainted(false);
                     ProgressBarsPanel.add(UITools.createProgressBarPanel(jProgressBar));
-                    infoLabel.setText(StringFormat.translate("task", "task.download_task.merging_file"));
+                    FILE_MERGE_PANEL.setText(StringFormat.translate("task", "task.download_task.merging_file"));
                     var isConverged = ConvergenceTool.converge(new File(tempDir, "video.m4s"), new File(tempDir, "audio.m4s"), new File(savePath, fileName), jProgressBar);
-                    infoLabel.setText(StringFormat.translate("task", isConverged ? "task.download_task.merge_success" : "task.download_task.merge_failed"));
 
                     //删除文件
                     DataControl.deleteFolder(tempDir, false);
+
+                    if (isConverged) {
+                        removeAllStatusTip();
+                        addStatusTip(DOWNLOAD_SUCCESS_PANEL);
+                    } else {
+                        removeAllStatusTip();
+                        addStatusTip(DOWNLOAD_FAILED_PANEL);
+                    }
                 }
 
                 isFinally = true;
                 downloadControlButton.setEnabled(false);
                 exitButton.setEnabled(true);
                 ProgressBarsPanel.removeAll();
-                SwingUtilities.invokeLater(() -> infoLabel.setText(String.format(
-                        StringFormat.translate("task.download_task.download_complete"),
-                        StringFormat.formatSize(fileSize[0] + fileSize[1]), StringFormat.formatSize(fileSize[0] + fileSize[1]))));
                 this.revalidate();
                 this.repaint();
             } catch (Exception e) {
@@ -151,10 +165,12 @@ public class BiliFileDownloadTask extends FileDownloadTask {
         progressTimer = new Timer(1000, e -> {
             if (isStart) {
                 downloadProgress.updateSpeed();
-                infoLabel.setText(String.format("<html>%s</html>",
-                        String.format(StringFormat.translate("task", "task.download_task.progress_single"),
-                                StringFormat.formatSize(downloadProgress.getDownloadedBytes()),
-                                StringFormat.formatSize(downloadProgress.getSpeed()))));
+                DOWNLOAD_SIZE_PANEL.setText(
+                        URLDownloadTool.DownloadProgress.formatSize(downloadProgress.getDownloadedBytes())
+                );
+                DOWNLOAD_SPEED_PANEL.setText(
+                        URLDownloadTool.DownloadProgress.formatSize(downloadProgress.getSpeed()) + "/s"
+                );
             }
         });
         progressTimer.start();
@@ -169,7 +185,8 @@ public class BiliFileDownloadTask extends FileDownloadTask {
 
         if (!isSuccess) {
             downloadControlButton.setEnabled(false);
-            infoLabel.setText(StringFormat.translate("task", "task.download_task.single_thread_error"));
+            removeAllStatusTip();
+            addStatusTip(DOWNLOAD_FAILED_PANEL);
             ToastMessage.show(this, StringFormat.translate("task", "task.download_task.download_failed_single"), ToastMessage.ERROR);
             stop();
             return false;
@@ -184,7 +201,6 @@ public class BiliFileDownloadTask extends FileDownloadTask {
     public void doWhenStop() {
         pauseController.pause();
         if (progressTimer != null) progressTimer.stop();
-        infoLabel.setText("<html>" + StringFormat.translate("task", "task.download_task.paused") + "</html>");
     }
 
     @Override

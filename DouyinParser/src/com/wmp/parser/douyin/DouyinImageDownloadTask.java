@@ -2,6 +2,7 @@ package com.wmp.parser.douyin;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.FolderDownloadTask;
+import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.StatusTipPanel;
 import com.wmp.downloader.tools.StringFormat;
 import com.wmp.downloader.tools.download.URLDownloadTool;
 import com.wmp.downloader.tools.file.DataControl;
@@ -34,6 +35,11 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
     private AtomicInteger completedCount;
     private volatile boolean hasAnyError = false;
 
+    private final StatusTipPanel DOWNLOAD_SIZE_PANEL = StatusTipPanel.DOWNLOAD_SIZE_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_SPEED_PANEL = StatusTipPanel.DOWNLOAD_SPEED_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_FAILED_PANEL = StatusTipPanel.DOWNLOAD_FAILED_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_SUCCESS_PANEL = StatusTipPanel.DOWNLOAD_SUCCESS_CREATOR.create();
+
     /**
      * 构造器
      */
@@ -56,6 +62,8 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
             DataControl.deleteFolder(tempDir, false);
             tempDir.mkdirs();
         }
+
+        addStatusTips(DOWNLOAD_SIZE_PANEL, DOWNLOAD_SPEED_PANEL);
     }
 
     private Map<String, String> buildHeaders() {
@@ -79,6 +87,9 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
 
     @Override
     public void doWhenStart() throws Exception {
+        removeAllStatusTip();
+        addStatusTips(DOWNLOAD_SIZE_PANEL, DOWNLOAD_SPEED_PANEL);
+
         // 初始化暂停控制器和进度对象
         if (pauseControllerList.isEmpty()) {
             for (int i = 0; i < imageUrls.length; i++) {
@@ -138,11 +149,8 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
                     totalDownloaded += dp.getDownloadedBytes();
                     totalSpeed += dp.getSpeed();
                 }
-                int completed = completedCount.get();
-                infoLabel.setText(String.format(StringFormat.translate("task", "task.download_task.progress_folder"),
-                        URLDownloadTool.DownloadProgress.formatSize(totalDownloaded),
-                        URLDownloadTool.DownloadProgress.formatSize(totalSpeed),
-                        completed, imageUrls.length));
+                DOWNLOAD_SIZE_PANEL.setText(URLDownloadTool.DownloadProgress.formatSize(totalDownloaded));
+                DOWNLOAD_SPEED_PANEL.setText(URLDownloadTool.DownloadProgress.formatSize(totalSpeed) + "/s");
             }
         });
         progressTimer.start();
@@ -172,9 +180,6 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
 
 
                 // ----- 单线程下载 -----
-                SwingUtilities.invokeLater(() ->
-                        infoLabel.setText(String.format("正在单线程下载图片: %s", fileName)));
-
                 JProgressBar singleBar = new JProgressBar(0, 100);
                 singleBar.setStringPainted(false);
                 SwingUtilities.invokeLater(() -> {
@@ -195,7 +200,6 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
 
             // 下载成功，更新UI
             SwingUtilities.invokeLater(() -> {
-                infoLabel.setText(String.format("图片下载完成: %s", fileName));
                 progressPanel.removeAll();
                 progressPanel.revalidate();
                 progressPanel.repaint();
@@ -226,13 +230,12 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
                 DataControl.deleteFolder(tempDir, false);
 
                 if (hasAnyError) {
-                    infoLabel.setText(StringFormat.translate("task", "task.download_task.partial_failed"));
+                    removeAllStatusTip();
+                    addStatusTip(DOWNLOAD_FAILED_PANEL);
                     ToastMessage.show(this, StringFormat.translate("task", "task.download_task.partial_failed"), ToastMessage.ERROR);
                 } else {
-                    infoLabel.setText(String.format("<html>%s</html>",
-                            String.format(StringFormat.translate("task", "task.download_task.progress_single"),
-                                    URLDownloadTool.DownloadProgress.formatSize(totalFileSize),
-                                    URLDownloadTool.DownloadProgress.formatSize(0))));
+                    removeAllStatusTip();
+                    addStatusTip(DOWNLOAD_SUCCESS_PANEL);
                 }
                 this.revalidate();
                 this.repaint();
@@ -244,7 +247,6 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
     public void doWhenStop() {
         pauseControllerList.forEach(URLDownloadTool.PauseController::pause);
         if (progressTimer != null) progressTimer.stop();
-        infoLabel.setText(StringFormat.translate("task", "task.download_task.paused"));
     }
 
     @Override

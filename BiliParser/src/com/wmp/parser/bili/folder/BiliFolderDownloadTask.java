@@ -3,6 +3,7 @@ package com.wmp.parser.bili.folder;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.FolderDownloadTask;
+import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.StatusTipPanel;
 import com.wmp.downloader.tools.StringFormat;
 import com.wmp.downloader.tools.download.ConvergenceTool;
 import com.wmp.downloader.tools.download.URLDownloadTool;
@@ -42,6 +43,11 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
     private AtomicInteger completedCount;
     private volatile boolean hasAnyError = false;
 
+    private final StatusTipPanel DOWNLOAD_SIZE_PANEL = StatusTipPanel.DOWNLOAD_SIZE_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_SPEED_PANEL = StatusTipPanel.DOWNLOAD_SPEED_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_FAILED_PANEL = StatusTipPanel.DOWNLOAD_FAILED_CREATOR.create();
+    private final StatusTipPanel DOWNLOAD_SUCCESS_PANEL = StatusTipPanel.DOWNLOAD_SUCCESS_CREATOR.create();
+
     public BiliFolderDownloadTask(JSONObject jsonObject) {
         super(jsonObject);  // 父类处理 savePath, folderName 等
 
@@ -79,6 +85,8 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
         File tempDir = new File(DataControl.getTempPath(), this.fileName + ".temp");
         if (tempDir.exists()) DataControl.deleteFolder(tempDir, false);
         tempDir.mkdirs();
+
+        addStatusTips(DOWNLOAD_SIZE_PANEL, DOWNLOAD_SPEED_PANEL);
     }
 
     private Map<String, String> buildHeaders() {
@@ -102,6 +110,9 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
     }
 
     public void doWhenStart() throws Exception {
+        removeAllStatusTip();
+        addStatusTips(DOWNLOAD_SIZE_PANEL, DOWNLOAD_SPEED_PANEL);
+
         if (pauseControllerList.isEmpty()) {
             for (int i = 0; i < videoUrls.length; i++) {
                 pauseControllerList.add(new PauseController());
@@ -167,12 +178,8 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
                     totalDownloaded += dp.getDownloadedBytes();
                     totalSpeed += dp.getSpeed();
                 }
-                int completed = completedCount.get();
-                infoLabel.setText(String.format(StringFormat.translate("task", "task.download_task.progress_folder"),
-                        DownloadProgress.formatSize(totalDownloaded),
-                        DownloadProgress.formatSize(totalSpeed),
-                        completed, videoUrls.length));
-
+                DOWNLOAD_SIZE_PANEL.setText(DownloadProgress.formatSize(totalDownloaded));
+                DOWNLOAD_SPEED_PANEL.setText(DownloadProgress.formatSize(totalSpeed) + "/s");
             }
         });
         progressTimer.start();
@@ -200,7 +207,6 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
 
         try {
             if (videoUrl != null) {
-                SwingUtilities.invokeLater(() -> infoLabel.setText(String.format(StringFormat.translate("task", "task.download_task.downloading_video_file"), outputName)));
                 JProgressBar videoProgressBar = new JProgressBar(0, 100);
                 videoProgressBar.setStringPainted(false);
                 SwingUtilities.invokeLater(() -> progressPanel.add(videoProgressBar));
@@ -227,7 +233,6 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
             downloadProgressList.set(fileIndex, audioDp);
 
             if (audioUrl != null) {
-                SwingUtilities.invokeLater(() -> infoLabel.setText(String.format(StringFormat.translate("task", "task.download_task.downloading_audio_file"), outputName)));
                 JProgressBar audioProgressBar = new JProgressBar(0, 100);
                 audioProgressBar.setStringPainted(false);
                 SwingUtilities.invokeLater(() -> progressPanel.add(audioProgressBar));
@@ -247,7 +252,6 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
 
             if (videoSuccess && audioSuccess) {
                 SwingUtilities.invokeLater(() -> {
-                    infoLabel.setText(String.format(StringFormat.translate("task", "task.download_task.merging"), outputName));
                     progressPanel.removeAll();
                     progressPanel.revalidate();
                     progressPanel.repaint();
@@ -277,7 +281,6 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
                 }
 
                 SwingUtilities.invokeLater(() -> {
-                    infoLabel.setText(String.format(StringFormat.translate("task", "task.download_task.file_complete"), outputName));
                     progressPanel.removeAll();
                     progressPanel.revalidate();
                     progressPanel.repaint();
@@ -307,13 +310,12 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
                 DataControl.deleteFolder(tempDir, false);
 
                 if (hasAnyError) {
-                    infoLabel.setText(StringFormat.translate("task", "task.download_task.partial_failed"));
+                    removeAllStatusTip();
+                    addStatusTip(DOWNLOAD_FAILED_PANEL);
                     ToastMessage.show(this, StringFormat.translate("task", "task.download_task.partial_failed_detail"), ToastMessage.ERROR);
                 } else {
-                    infoLabel.setText(String.format("<html>%s</html>",
-                            String.format(StringFormat.translate("task", "task.download_task.progress_single"),
-                                    DownloadProgress.formatSize(totalFileSize),
-                                    DownloadProgress.formatSize(0))));
+                    removeAllStatusTip();
+                    addStatusTip(DOWNLOAD_SUCCESS_PANEL);
                 }
                 this.revalidate();
                 this.repaint();
@@ -324,7 +326,6 @@ public class BiliFolderDownloadTask extends FolderDownloadTask {
     public void doWhenStop() {
         pauseControllerList.forEach(PauseController::pause);
         if (progressTimer != null) progressTimer.stop();
-        infoLabel.setText(StringFormat.translate("task", "task.download_task.paused"));
     }
 
     @Override
