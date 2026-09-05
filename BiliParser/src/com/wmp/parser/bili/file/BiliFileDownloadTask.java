@@ -96,7 +96,7 @@ public class BiliFileDownloadTask extends FileDownloadTask {
                 }
 
                 downloadProgress.resetSpeed();
-                downloadProgress.resetMergedBytes();
+                downloadProgress.resetMergedBytes(0);
                 ProgressBarsPanel.removeAll();
                 threadProgressBarList.clear();
 
