@@ -4,19 +4,19 @@ import com.wmp.downloader.tools.file.DataControl;
 import com.wmp.downloader.ui.Downloader;
 import org.apache.log4j.Logger;
 
-import java.awt.*;
+import java.awt.SystemTray;
+import java.awt.TrayIcon;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.Set;
 
 /**
  * 「每日金句」调度器。
@@ -25,12 +25,14 @@ import java.util.TimerTask;
  * <ol>
  *     <li>从插件自带文本文件 {@code /com/wmp/resource/text.txt}（每行一句）读取金句库；</li>
  *     <li>读取配置（使用 {@link DataControl#get(String, Object)}），支持两种显示方式：</li>
- *     <li>启动时显示一次，或在多个固定时间点（分号 {@code ;} 分隔）每日推送；</li>
+ *     <li>启动时显示，或每日在多个固定时间点（分号 {@code ;} 分隔）推送；</li>
  *     <li>通过系统托盘 {@link Downloader#trayIcon} 弹出系统通知。</li>
  * </ol>
  *
- * <p>由于减速带尚未为第三方功能插件提供明确的“启动完成”生命周期回调，本类通过守护线程
- * 轮询托盘就绪状态后自行启动调度；若日后主程序提供对应回调，可改用回调接入（见 TODO）。</p>
+ * <p>实现说明：为避免 {@link java.util.Timer}/{@link java.util.TimerTask} 复用已执行任务、
+ * 单定时线程被异常杀死等造成的“只显示一次/后续不触发”问题，本类改用<strong>单个守护线程按秒轮询</strong>：
+ * 每当系统时间走到某个已配置的 HH:mm 且当日尚未推送过即推送一次；跨天自动清空“今日已推”，因此能持续每天触发，
+ * 且每次读取最新配置（保存设置即时生效，无需重建任何定时器）。</p>
  *
  * @author 吴鹤轩
  */
@@ -48,13 +50,26 @@ public class JuziReminder {
 
     public static final String VALUE_START = "start";
     public static final String VALUE_TIME = "time";
+
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+    /** 轮询间隔（毫秒） */
+    private static final long TICK_MILLIS = 250L;
 
     private static final JuziReminder INSTANCE = new JuziReminder();
 
     private final List<String> quotes = new ArrayList<>();
     private volatile boolean started = false;
-    private volatile Timer timer;
+
+    /** 守护轮询线程 */
+    private volatile Thread worker;
+    /** 仅保存当前模式快照，避免每次读 DataControl 带来的不确定类型 */
+    private volatile String currentShowWay = VALUE_START;
+    /** start 模式下“本次启动已推送过”标记 */
+    private volatile boolean startFiredInSession = false;
+    /** 去重用的“最近一次检查的日期”与“当日已推送时间点” */
+    private LocalDate lastDay = null;
+    private final Set<LocalTime> firedToday = new HashSet<>();
+
     private int quoteIndex = 0;
 
     private JuziReminder() {
@@ -68,8 +83,8 @@ public class JuziReminder {
      * 启动提醒逻辑（幂等）。
      *
      * <p>说明：调用时机是插件主类被主程序实例化的瞬间，此时 {@link Downloader#trayIcon} 可能尚未就绪，
-     * 因此启动一个守护线程轮询等待托盘可用后再执行显示与排程。</p>
-     * <p>TODO: 若主程序后续提供“应用启动完成”等生命周期回调，应改为在回调中调用本方法，替代轮询。</p>
+     * 因此轮询线程会等待托盘可用后再开始工作。</p>
+     * <p>TODO: 若主程序后续提供“应用启动完成”等生命周期回调，可改为在回调中调用本方法。</p>
      */
     public synchronized void start() {
         if (started) {
@@ -79,52 +94,97 @@ public class JuziReminder {
 
         loadQuotes();
 
-        Thread.ofVirtual().start(() -> {
-            // 轮询等待系统托盘与 trayIcon 就绪（最多约 30 秒）
-            long deadline = System.currentTimeMillis() + 30_000L;
-            while (System.currentTimeMillis() < deadline) {
-                if (Downloader.trayIcon != null && SystemTray.isSupported()) {
-                    planByConfig();
-                    return;
-                }
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    logger.warn("等待托盘就绪被打断", e);
-                    return;
-                }
-            }
-            logger.warn("等待 Downloader.trayIcon 就绪超时，「每日金句」本次未启动。");
-        });
+        worker = Thread.ofVirtual().name("daily-juzi-worker").start(this::workLoop);
     }
 
     /**
-     * 读取配置并执行：启动时显示 / 定时排程。
+     * 主循环：等待托盘就绪后，按秒轮询执行“启动时显示”或“固定时间点”推送。
+     */
+    private void workLoop() {
+        // 等待系统托盘与 trayIcon 就绪（最多约 30 秒）
+        long deadline = System.currentTimeMillis() + 30_000L;
+        while (System.currentTimeMillis() < deadline) {
+            if (Downloader.trayIcon != null && SystemTray.isSupported()) {
+                break;
+            }
+            sleepQuietly(500L);
+        }
+        if (Downloader.trayIcon == null || !SystemTray.isSupported()) {
+            logger.warn("等待 Downloader.trayIcon 就绪超时，「每日金句」本次未启动。");
+            return;
+        }
+        logger.info("「每日金句」轮询线程已就绪。");
+
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                String showWay = String.valueOf(DataControl.get(KEY_SHOW_WAY, VALUE_START));
+                currentShowWay = (VALUE_TIME.equalsIgnoreCase(showWay)) ? VALUE_TIME : VALUE_START;
+
+                LocalDate today = LocalDate.now();
+                if (!today.equals(lastDay)) {
+                    // 跨天：重置“今日已推送”集合
+                    lastDay = today;
+                    firedToday.clear();
+                    logger.debug("「每日金句」已切换到新的一天：" + today);
+                }
+
+                if (VALUE_START.equals(currentShowWay)) {
+                    // 启动时：本次进程只推一次（跨天也仅当本次是新会话首次推进时触发）
+                    if (!startFiredInSession) {
+                        showOneRandom();
+                        startFiredInSession = true;
+                    }
+                } else {
+                    // 固定时间点：准点触发——当前时刻所在“分钟”命中某个配置时间点且当日尚未推过，则推一次
+                    List<LocalTime> times = parseTimes(String.valueOf(DataControl.get(KEY_SHOW_TIMES, "")));
+                    if (times.isEmpty()) {
+                        // 未配置时间点：等待，不推
+                    } else {
+                        LocalTime now = LocalTime.now();
+                        for (LocalTime t : times) {
+                            if (sameMinute(now, t) && firedToday.add(t)) {
+                                // 时间点已到达（当前处于该分钟的轮询窗口）且当日尚未推过
+                                showOneRandom();
+                                logger.info("「每日金句」已在时间点触发：" + t);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("「每日金句」轮询过程出错", e);
+            }
+            sleepQuietly(TICK_MILLIS);
+        }
+    }
+
+    /**
+     * 按当前配置立即执行一次“该做的动作”（供设置页保存后调用）：
+     * <ul>
+     *     <li>start 模式：把“已推送”标记复位并立即推一次（等效一次新的启动）；</li>
+     *     <li>time 模式：无需特判，轮询线程每次都会读最新配置，保存即时生效。</li>
+     * </ul>
      */
     public synchronized void planByConfig() {
-        cancelAllTasks();
-
-        String showWay = DataControl.get(KEY_SHOW_WAY, VALUE_START);
-        logger.info("「每日金句」显示方式配置 show_way=" + showWay);
-
-        if (VALUE_START.equalsIgnoreCase(String.valueOf(showWay))) {
-            // 启动时：显示一次（若需每日一次可改每日排程，见 TODO）
-            // TODO: 若希望“每天启动后仅当天推送一次”，需由主程序记录“今日是否已推送”，这里仅保留启动即推一次。
-            showOneRandom();
-        } else {
-            // 固定时间点：解析分号分隔的 HH:mm，为每个时间点安排每日循环任务
-            String rawTimes = DataControl.get(KEY_SHOW_TIMES, "");
-            List<LocalTime> times = parseTimes(String.valueOf(rawTimes));
-            if (times.isEmpty()) {
-                logger.warn("固定时间点配置为空或格式不正确，未排程。配置=" + rawTimes);
-                return;
+        String showWay = String.valueOf(DataControl.get(KEY_SHOW_WAY, VALUE_START));
+        currentShowWay = (VALUE_TIME.equalsIgnoreCase(showWay)) ? VALUE_TIME : VALUE_START;
+        if (VALUE_START.equals(currentShowWay)) {
+            startFiredInSession = false;
+            if (Downloader.trayIcon != null && SystemTray.isSupported()) {
+                showOneRandom();
+                startFiredInSession = true;
             }
-            for (LocalTime time : times) {
-                scheduleDaily(time);
-            }
-            logger.info("「每日金句」已排程 " + times.size() + " 个每日时间点：" + times);
         }
+    }
+
+    /**
+     * 试看：立即推送一句金句（供设置页预览使用，不影响排程状态）。
+     */
+    public synchronized void testShow() {
+        if (!SystemTray.isSupported() || Downloader.trayIcon == null) {
+            showNotify("每日金句", "托盘尚未就绪，暂无法预览。");
+            return;
+        }
+        showOneRandom();
     }
 
     /**
@@ -152,48 +212,7 @@ public class JuziReminder {
     }
 
     /**
-     * 为单个时间点安排“每日重复”任务。
-     */
-    private void scheduleDaily(LocalTime time) {
-        timer.schedule(new TimerTask() {
-            @Override
-            public void run() {
-                showOneRandom();
-                reschedule(time, this);
-            }
-        }, msUntilNext(time));
-    }
-
-    /**
-     * 任务执行后，将同一个任务安排到下一个该时间点（跨天）。
-     */
-    private void reschedule(LocalTime time, TimerTask task) {
-        // 计算从当前时刻起到「下一个该时间点」的延时；若今天该时间已过则顺延到明天。
-        timer.schedule(task, msUntilNext(time));
-    }
-
-    private long msUntilNext(LocalTime target) {
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime next = now.with(target);
-        if (!next.isAfter(now)) {
-            next = next.plusDays(1);
-        }
-        return Duration.between(now, next).toMillis();
-    }
-
-    /**
-     * 取消所有已排程的定时任务（配置变更后重新排程时使用），并新建一个定时器。
-     */
-    private void cancelAllTasks() {
-        Timer oldTimer = timer;
-        timer = new Timer("daily-juzi-timer", true);
-        if (oldTimer != null) {
-            oldTimer.cancel();
-        }
-    }
-
-    /**
-     * 随机顺序展示一句金句（轮换取下一句，避免重复）。若没有读取到任何金句则跳过。
+     * 顺序展示一句金句（轮换取下一句，避免重复）。若没有读取到任何金句则跳过。
      */
     private synchronized void showOneRandom() {
         if (quotes.isEmpty()) {
@@ -221,14 +240,18 @@ public class JuziReminder {
     }
 
     /**
-     * 试看：立即推送一句金句（供设置页预览使用，不修改排程）。
+     * 判断两个时刻是否处于同一分钟（用于“准点触发”判断）。
      */
-    public synchronized void testShow() {
-        if (!SystemTray.isSupported() || Downloader.trayIcon == null) {
-            showNotify("每日金句", "托盘尚未就绪，暂无法预览。");
-            return;
+    private static boolean sameMinute(LocalTime now, LocalTime target) {
+        return now.getHour() == target.getHour() && now.getMinute() == target.getMinute();
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
-        showOneRandom();
     }
 
     /**
