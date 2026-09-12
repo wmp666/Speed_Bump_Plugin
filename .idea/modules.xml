@@ -5,6 +5,7 @@
       <module fileurl="file://$PROJECT_DIR$/BiliParser/BiliParser.iml" filepath="$PROJECT_DIR$/BiliParser/BiliParser.iml" />
       <module fileurl="file://$PROJECT_DIR$/DouyinParser/DouyinParser.iml" filepath="$PROJECT_DIR$/DouyinParser/DouyinParser.iml" />
       <module fileurl="file://$PROJECT_DIR$/DailyJuzi/DailyJuzi.iml" filepath="$PROJECT_DIR$/DailyJuzi/DailyJuzi.iml" />
+      <module fileurl="file://$PROJECT_DIR$/WindowMask/WindowMask.iml" filepath="$PROJECT_DIR$/WindowMask/WindowMask.iml" />
     </modules>
   </component>
 </project>
