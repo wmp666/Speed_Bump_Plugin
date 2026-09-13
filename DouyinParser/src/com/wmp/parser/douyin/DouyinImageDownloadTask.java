@@ -173,7 +173,7 @@ public class DouyinImageDownloadTask extends FolderDownloadTask {
         URLDownloadTool.DownloadProgress dp = downloadProgressList.get(index);
         pc.resume();
         dp.resetSpeed();
-        dp.resetMergedBytes();
+        dp.resetMergedBytes(0);
 
         try {
             URI uri = URI.create(url);

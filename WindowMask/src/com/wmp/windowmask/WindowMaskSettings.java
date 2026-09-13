@@ -94,13 +94,13 @@ public class WindowMaskSettings extends AbstractSpecialSettingsPage {
         formPanel.add(new JLabel("匹配文字："), gbc);
 
         matchField = new JTextField(28);
-        matchField.setToolTipText("窗口标题包含其中任意一段文字即触发遮挡（仅在这个窗口成为当前窗口时生效）；多个字段用英文分号 ; 分隔，例如：bilibili;抖音;Steam");
+        matchField.setToolTipText("窗口标题包含其中任意一段文字即触发遮挡（不限于当前获得焦点的窗口）；多个字段用英文分号 ; 分隔，例如：bilibili;抖音;Steam");
         gbc.gridx = 1;
         gbc.weightx = 1;
         formPanel.add(matchField, gbc);
 
         // 匹配说明
-        var matchTip = new JLabel("多个字段用英文分号 ; 分隔，当前窗口标题命中任意一个即遮挡；留空则不遮挡任何窗口。");
+        var matchTip = new JLabel("多个字段用英文分号 ; 分隔，命中任意一个即遮挡（后台窗口也算）；留空则不遮挡任何窗口。");
         matchTip.setForeground(new Color(130, 130, 140));
         gbc.gridx = 1;
         gbc.gridy = 2;
