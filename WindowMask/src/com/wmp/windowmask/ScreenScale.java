@@ -60,4 +60,20 @@ final class ScreenScale {
                 (int) Math.round(physical.width / scale),
                 (int) Math.round(physical.height / scale));
     }
+
+    /** Swing 逻辑矩形 → 物理像素矩形 */
+    static Rectangle toPhysical(Rectangle logical) {
+        if (logical == null) {
+            return null;
+        }
+        double scale = scale();
+        if (Math.abs(scale - 1.0) < 1e-6) {
+            return new Rectangle(logical);
+        }
+        return new Rectangle(
+                (int) Math.round(logical.x * scale),
+                (int) Math.round(logical.y * scale),
+                (int) Math.round(logical.width * scale),
+                (int) Math.round(logical.height * scale));
+    }
 }

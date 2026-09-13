@@ -18,11 +18,15 @@ import java.awt.RenderingHints;
  * <p>实现要点：</p>
  * <ol>
  *     <li>使用无边框的 {@link JWindow}（不出现在任务栏，也不需要标题栏）；</li>
- *     <li>{@code setAlwaysOnTop(true)} 保证盖在目标窗口（当前获得焦点的那个窗口）之上；</li>
  *     <li>{@link JWindow#setFocusableWindowState(boolean) setFocusableWindowState(false)} +
  *         {@code setAutoRequestFocus(false)}：遮挡层<strong>不会抢焦点</strong>，
- *         因此它不会成为「前台窗口」，检测循环看到的仍然是被遮挡的那个窗口，不会出现遮挡/消失抖动；</li>
- *     <li>它虽然不抢焦点，但依然位于最顶层并接收鼠标消息，所以被遮挡期间点击<strong>不会穿透</strong>到下面的窗口；</li>
+ *         因此不会顶替用户正在使用的窗口，也不会干扰检测；</li>
+ *     <li>它虽然不抢焦点，但依然接收鼠标消息，所以被遮挡期间点击<strong>不会穿透</strong>到下面的窗口；</li>
+ *     <li>层级不用 {@code setAlwaysOnTop}，而是由 {@link WinNative#placeAboveTarget} 把遮罩放到
+ *         目标窗口<strong>正上方</strong>，于是“后台窗口的遮罩”不会浮到最前面挡住用户当前在用的窗口；
+ *         每轮检测都会重新放一次，以跟随窗口的激活/置顶变化；</li>
+ *     <li>万一层级放置失败或复核没通过，退化为<strong>置顶显示</strong>（兜底），
+ *         保证遮罩不会出现“被压在目标窗口下面看不见”的情况；恢复正常后会自动取消置顶；</li>
  *     <li>所有窗口操作都在 EDT 上执行，检测线程只写入 {@code wanted*} 状态。</li>
  * </ol>
  *
@@ -45,30 +49,44 @@ final class MaskOverlay {
     private volatile boolean wantedVisible = false;
     private volatile Rectangle wantedBounds = null;
     private volatile String wantedText = "";
+    /** 被遮挡的目标窗口句柄（0 表示不做层级调整） */
+    private volatile long wantedTarget = 0L;
 
+    /** 以下字段仅在 EDT 上访问 */
     private JWindow window;
+    /** 遮罩层自身的 Win32 窗口句柄（缓存，用于层级调整） */
+    private long ownHwnd = 0L;
+    /** 是否正处于“置顶兜底”状态 */
+    private boolean topMostFallback = false;
 
     /**
      * 在指定矩形上显示遮罩（矩形为 Swing 逻辑坐标）。
      *
-     * @param bounds 目标矩形，为 {@code null} 或尺寸非正时等同于 {@link #hide()}
-     * @param text   要显示的文字，{@code \n} 表示换行；为空则显示纯色遮罩
+     * @param bounds     目标矩形，为 {@code null} 或尺寸非正时等同于 {@link #hide()}
+     * @param text       要显示的文字，{@code \n} 表示换行；为空则显示纯色遮罩
+     * @param targetHwnd 被遮挡窗口的句柄，用于把遮罩放到它的 z 序正上方（0 表示不调整）
      */
-    void showAt(Rectangle bounds, String text) {
+    void showAt(Rectangle bounds, String text, long targetHwnd) {
         if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
             hide();
             return;
         }
         String value = text == null ? "" : text;
         Rectangle target = new Rectangle(bounds);
-        // 状态没变化就不必再往 EDT 派发任务（轮询很频繁，这里能省掉大量空转）
-        if (wantedVisible && target.equals(wantedBounds) && value.equals(wantedText)) {
-            return;
-        }
+        boolean changed = !wantedVisible
+                || !target.equals(wantedBounds)
+                || !value.equals(wantedText)
+                || targetHwnd != wantedTarget;
         wantedBounds = target;
         wantedText = value;
+        wantedTarget = targetHwnd;
         wantedVisible = true;
-        SwingUtilities.invokeLater(this::applyState);
+        if (changed) {
+            SwingUtilities.invokeLater(this::applyState);
+        } else {
+            // 位置文字都没变，但窗口的激活/置顶状态可能变了：只需要重放一次层级
+            SwingUtilities.invokeLater(this::restack);
+        }
     }
 
     /** 隐藏遮罩（幂等） */
@@ -77,6 +95,7 @@ final class MaskOverlay {
             return;
         }
         wantedVisible = false;
+        wantedTarget = 0L;
         SwingUtilities.invokeLater(this::applyState);
     }
 
@@ -110,7 +129,42 @@ final class MaskOverlay {
         if (!window.isVisible()) {
             window.setVisible(true);
         }
+        restack();
         panel.repaint();
+    }
+
+    /**
+     * 把遮罩放到目标窗口正上方；失败时用置顶兜底。
+     *
+     * <p>每轮检测都会调用一次：窗口被激活、被其它窗口覆盖等都会改变 z 序，需要持续跟随。</p>
+     */
+    private void restack() {
+        long target = wantedTarget;
+        JWindow w = window;
+        if (target == 0L || w == null || !w.isVisible()) {
+            return;
+        }
+        if (ownHwnd == 0L || !WinNative.isWindow(ownHwnd)) {
+            // 首次或句柄失效时按“本进程 + 无标题 + 矩形匹配”重新定位自己
+            ownHwnd = WinNative.findOwnTitlelessWindow(w.getBounds());
+        }
+        if (ownHwnd == 0L) {
+            return;
+        }
+        boolean placed = WinNative.placeAboveTarget(ownHwnd, target);
+        if (!placed) {
+            // 兜底：直接置顶，先保证遮挡看得见（例如目标窗口是管理员进程、层级调用被拒绝时）
+            if (!topMostFallback) {
+                topMostFallback = WinNative.setTopMost(ownHwnd);
+            }
+            return;
+        }
+        if (topMostFallback) {
+            // 已经能正常放到目标上方了：取消兜底置顶，恢复跟随目标窗口的普通层级
+            WinNative.clearTopMost(ownHwnd);
+            topMostFallback = false;
+            WinNative.placeAboveTarget(ownHwnd, target);
+        }
     }
 
     private void ensureWindow() {
@@ -118,8 +172,7 @@ final class MaskOverlay {
             return;
         }
         JWindow w = new JWindow();
-        w.setAlwaysOnTop(true);
-        // 不抢焦点：否则遮挡层自己会成为前台窗口，检测循环会误判为“不匹配”而立刻收起遮罩
+        // 不抢焦点：否则遮罩自己会成为前台窗口，既干扰用户也不利于检测
         w.setFocusableWindowState(false);
         w.setAutoRequestFocus(false);
         w.setLayout(new BorderLayout());

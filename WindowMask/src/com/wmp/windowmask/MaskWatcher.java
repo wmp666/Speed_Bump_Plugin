@@ -5,23 +5,28 @@ import org.apache.log4j.Logger;
 
 import java.awt.Rectangle;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
- * 「窗口遮挡」检测器：轮询当前<strong>获得焦点的窗口</strong>（前台窗口），命中匹配文字时盖上一层自定义文字遮罩。
+ * 「窗口遮挡」检测器：轮询所有顶层窗口，标题命中匹配文字的就套上自定义文字遮罩。
  *
  * <p>职责：</p>
  * <ol>
  *     <li>定时读取配置（{@link DataControl#get(String, Object)}），因此设置页保存后<strong>立即生效</strong>，
  *         不需要重建任何定时器；</li>
- *     <li>每 {@value #TICK_MILLIS} 毫秒取一次前台窗口标题，标题包含任意一个匹配字段即视为命中
- *         （匹配字段支持多个，用英文分号 {@code ;} 分隔）；</li>
- *     <li>命中时把 {@link MaskOverlay} 以该窗口的矩形显示出来，窗口移动/缩放时遮罩跟随；</li>
- *     <li>不命中、被最小化或已切走时立即隐藏遮罩。</li>
+ *     <li>每 {@value #TICK_MILLIS} 毫秒枚举一次全机可见的顶层窗口，<strong>不依赖焦点</strong>：
+ *         只要某个窗口的标题包含任意一个匹配字段（多个字段用英文分号 {@code ;} 分隔）就被遮挡，
+ *         后台窗口同样处理，并把遮罩放到该窗口的 z 序正上方；</li>
+ *     <li>窗口移动/缩放时遮罩跟随；窗口关闭、标题变化、被最小化时遮罩立即收起。</li>
  * </ol>
  *
  * <p>实现说明：与「每日金句」同样的思路，不使用 {@link java.util.Timer}，而是一个守护轮询线程；
- * 遮罩窗口不抢焦点，所以它不会顶替前台窗口，检测结果不会自我干扰。</p>
+ * 遮罩窗口不抢焦点，也不会浮到最顶层，因此既不会干扰用户当前在用的窗口，也不会自我干扰检测。</p>
  *
  * @author 无名牌
  */
@@ -42,15 +47,21 @@ public class MaskWatcher {
     /** 轮询间隔（毫秒） */
     private static final long TICK_MILLIS = 200L;
 
+    /** 同时最多遮挡的窗口数量（防止匹配文字过于宽泛时创建过多遮罩窗口） */
+    private static final int MAX_OVERLAYS = 8;
+
     private static final MaskWatcher INSTANCE = new MaskWatcher();
 
-    private final MaskOverlay overlay = new MaskOverlay();
+    /** 当前活跃的遮罩：窗口句柄 → 遮挡层（仅检测线程访问） */
+    private final Map<Long, MaskOverlay> overlays = new LinkedHashMap<>();
+    /** 上一轮记过日志的遮挡集合，避免每 200 毫秒写一次日志 */
+    private final Set<Long> loggedHwnds = new HashSet<>();
 
     private volatile boolean started = false;
     /** 测试遮挡的截止时间戳（设置页「试一下」用） */
     private volatile long testUntil = 0L;
-    /** 当前正被遮挡的窗口句柄，0 表示未遮挡（仅用于状态日志，避免刷屏） */
-    private volatile long maskedHwnd = 0L;
+    /** 匹配数量超限的日志只记一次 */
+    private volatile boolean overflowLogged = false;
 
     private MaskWatcher() {
     }
@@ -177,68 +188,125 @@ public class MaskWatcher {
         }
     }
 
-    /** 单次检测：决定此刻该不该遮挡当前前台窗口 */
+    /** 单次检测：按标题找出所有该遮挡的窗口，并套用遮罩 */
     private void tick() {
-        long hwnd = resolveTarget(System.currentTimeMillis() < testUntil);
-        if (hwnd == 0L) {
-            clearMask();
-            return;
-        }
-        Rectangle physical = WinNative.windowRect(hwnd);
-        if (physical == null || physical.width <= 0 || physical.height <= 0) {
-            clearMask();
-            return;
-        }
-        overlay.showAt(ScreenScale.toLogical(physical),
-                decodeText(getString(KEY_DISPLAY_TEXT, DEFAULT_DISPLAY_TEXT)));
-
-        if (maskedHwnd != hwnd) {
-            maskedHwnd = hwnd;
-            logger.info("「窗口遮挡」已遮挡窗口：" + WinNative.windowTitle(hwnd));
-        }
+        String displayText = decodeText(getString(KEY_DISPLAY_TEXT, DEFAULT_DISPLAY_TEXT));
+        applyTargets(collectTargets(), displayText);
     }
 
     /**
-     * 判断此刻应当遮挡哪个窗口。
+     * 收集本轮需要遮挡的窗口（句柄 → Swing 逻辑矩形）。
      *
-     * <p>只看<strong>当前获得焦点的窗口</strong>（{@code GetForegroundWindow}）：它可见、未最小化、
-     * 标题命中任意匹配字段时就返回它，否则返回 0 表示不遮挡。</p>
-     *
-     * @param testing 是否处于设置页的「试一下」预览中（预览时无视匹配文字与启用开关）
+     * <p>关键：这里枚举的是<strong>所有可见顶层窗口</strong>，不看谁在前台，
+     * 因此“没获得焦点的窗口”同样会被遮挡。</p>
      */
-    private long resolveTarget(boolean testing) {
-        long hwnd = WinNative.foregroundWindow();
-        if (hwnd == 0L || !WinNative.isVisible(hwnd) || WinNative.isMinimized(hwnd)) {
-            return 0L;
+    private Map<Long, Rectangle> collectTargets() {
+        Map<Long, Rectangle> targets = new LinkedHashMap<>();
+
+        if (System.currentTimeMillis() < testUntil) {
+            // 「试一下」：无视匹配文字，只遮当前前台窗口（方便在主界面上预览效果）
+            collectOne(targets, WinNative.foregroundWindow());
+            return targets;
         }
-        if (testing) {
-            return hwnd;
-        }
+
         if (!isEnabled()) {
-            return 0L;
+            return targets;
         }
         List<String> keywords = parseKeywords(getString(KEY_MATCH_TEXT, ""));
         if (keywords.isEmpty()) {
             // 未配置匹配文字：静默状态
-            return 0L;
+            return targets;
         }
-        if (!matches(WinNative.windowTitle(hwnd), keywords)) {
-            return 0L;
+
+        int overflow = 0;
+        for (WinNative.WindowEntry entry : WinNative.listVisibleWindows()) {
+            long hwnd = entry.hwnd();
+            String title = entry.title();
+            if (title.isEmpty() || !matches(title, keywords)) {
+                continue;
+            }
+            if (WinNative.isOwnWindow(hwnd)) {
+                // 安全阀：绝不遮挡减速带自己的窗口（主界面/对话框/遮罩层自身）
+                continue;
+            }
+            if (targets.size() >= MAX_OVERLAYS) {
+                overflow++;
+                continue;
+            }
+            collectOne(targets, hwnd);
         }
-        if (WinNative.isOwnWindow(hwnd)) {
-            // 安全阀：绝不遮挡减速带自己的窗口（主界面/对话框），
-            // 否则用户可能连设置页都点不到，只能靠改配置文件恢复。
-            return 0L;
-        }
-        return hwnd;
+        logOverflow(overflow);
+        return targets;
     }
 
-    private void clearMask() {
-        if (maskedHwnd != 0L) {
-            maskedHwnd = 0L;
-            logger.info("「窗口遮挡」遮挡已解除。");
+    /** 收集单个窗口（要求可见、未最小化、矩形有效） */
+    private void collectOne(Map<Long, Rectangle> targets, long hwnd) {
+        if (hwnd == 0L || !WinNative.isVisible(hwnd) || WinNative.isMinimized(hwnd)) {
+            return;
         }
-        overlay.hide();
+        Rectangle physical = WinNative.windowRect(hwnd);
+        if (physical == null || physical.width <= 0 || physical.height <= 0) {
+            return;
+        }
+        targets.put(hwnd, ScreenScale.toLogical(physical));
+    }
+
+    /** 套用遮罩：为每个目标窗口显示/更新遮罩，并收起不再命中的遮罩 */
+    private void applyTargets(Map<Long, Rectangle> targets, String displayText) {
+        for (Map.Entry<Long, Rectangle> entry : targets.entrySet()) {
+            long hwnd = entry.getKey();
+            MaskOverlay overlay = overlays.get(hwnd);
+            if (overlay == null) {
+                overlay = new MaskOverlay();
+                overlays.put(hwnd, overlay);
+            }
+            overlay.showAt(entry.getValue(), displayText, hwnd);
+        }
+
+        for (Iterator<Map.Entry<Long, MaskOverlay>> it = overlays.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Long, MaskOverlay> entry = it.next();
+            if (!targets.containsKey(entry.getKey())) {
+                entry.getValue().hide();
+                it.remove();
+            }
+        }
+
+        if (!targets.keySet().equals(loggedHwnds)) {
+            loggedHwnds.clear();
+            loggedHwnds.addAll(targets.keySet());
+            if (targets.isEmpty()) {
+                logger.info("「窗口遮挡」当前没有需要遮挡的窗口。");
+            } else {
+                logger.info("「窗口遮挡」正在遮挡 " + targets.size() + " 个窗口：" + describe(targets.keySet()));
+            }
+        }
+    }
+
+    private void logOverflow(int overflow) {
+        if (overflow > 0 && !overflowLogged) {
+            overflowLogged = true;
+            logger.warn("「窗口遮挡」匹配到的窗口超过上限 " + MAX_OVERLAYS + " 个，有 " + overflow
+                    + " 个未遮挡；建议把匹配文字写得更具体一些。");
+        } else if (overflow == 0) {
+            overflowLogged = false;
+        }
+    }
+
+    /** 把窗口标题拼成简短描述（最多 3 个），仅用于日志 */
+    private static String describe(Set<Long> hwnds) {
+        StringBuilder builder = new StringBuilder();
+        int count = 0;
+        for (long hwnd : hwnds) {
+            if (count++ > 0) {
+                builder.append("、");
+            }
+            builder.append("[").append(WinNative.windowTitle(hwnd)).append("]");
+            if (count >= 3) {
+                builder.append("…");
+                break;
+            }
+        }
+        return builder.toString();
     }
 
     /** 读取启用开关；配置缺失或为空时视为启用 */
