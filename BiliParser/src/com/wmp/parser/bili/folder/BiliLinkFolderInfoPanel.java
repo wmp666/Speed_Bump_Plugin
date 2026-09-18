@@ -1,6 +1,6 @@
 package com.wmp.parser.bili.folder;
 
-import com.wmp.downloader.exception.BiliDownloadTaskException;
+import com.wmp.speed_bump.common.background.exception.BiliDownloadTaskException;
 import com.wmp.downloader.newArchitecture.abstractTask.AbstractParser;
 import com.wmp.downloader.newArchitecture.abstractTask.linkInfoPanel.LinkFolderInfoPanel;
 import com.wmp.downloader.tools.BiliInfoFormat;
