@@ -4,7 +4,7 @@ import com.wmp.speed_bump.common.background.exception.BiliDownloadTaskException;
 import com.wmp.downloader.newArchitecture.abstractTask.AbstractParser;
 import com.wmp.downloader.newArchitecture.abstractTask.linkInfoPanel.LinkFolderInfoPanel;
 import com.wmp.downloader.tools.BiliInfoFormat;
-import com.wmp.downloader.tools.StringFormat;
+import com.wmp.speed_bump.common.background.tool.StringFormat;
 import com.wmp.downloader.ui.FunctionDialog;
 import com.wmp.parser.bili.info.BiliAudioInfo;
 import com.wmp.parser.bili.info.BiliDownloadInfo;

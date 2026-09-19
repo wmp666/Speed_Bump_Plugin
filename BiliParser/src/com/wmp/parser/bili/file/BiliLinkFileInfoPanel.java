@@ -3,7 +3,7 @@ package com.wmp.parser.bili.file;
 import com.wmp.speed_bump.common.background.exception.BiliDownloadTaskException;
 import com.wmp.downloader.newArchitecture.abstractTask.AbstractParser;
 import com.wmp.downloader.newArchitecture.abstractTask.linkInfoPanel.LinkFileInfoPanel;
-import com.wmp.downloader.tools.StringFormat;
+import com.wmp.speed_bump.common.background.tool.StringFormat;
 import com.wmp.downloader.ui.FunctionDialog;
 import com.wmp.parser.bili.info.BiliDownloadInfo;
 

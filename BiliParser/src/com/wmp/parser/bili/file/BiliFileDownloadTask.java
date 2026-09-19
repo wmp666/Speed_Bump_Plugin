@@ -4,7 +4,7 @@ package com.wmp.parser.bili.file;
 import com.alibaba.fastjson2.JSONObject;
 import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.FileDownloadTask;
 import com.wmp.downloader.newArchitecture.abstractTask.downloadTask.StatusTipPanel;
-import com.wmp.downloader.tools.StringFormat;
+import com.wmp.speed_bump.common.background.tool.StringFormat;
 import com.wmp.downloader.tools.download.ConvergenceTool;
 import com.wmp.downloader.tools.download.URLDownloadTool;
 import com.wmp.downloader.tools.file.DataControl;
