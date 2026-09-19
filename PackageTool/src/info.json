@@ -1,0 +1,9 @@
+{
+  "id": "打包工具",
+  "version": "1.0.0",
+  "author": "无名牌",
+  "mainClass": "com.wmp.packagetool.PackageTool",
+  "plugin_support_version_start": "1.1.0",
+  "plugin_support_version_last": "1.1.+",
+  "support_platform": "windows"
+}
